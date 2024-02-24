@@ -251,11 +251,23 @@ function stringArrayV3(ast) {
     let nodes = []
     // The sorting function maybe missing in some config
     function find2(refer_path) {
+      const t1 = refer_path.parentPath.getFunctionParent().parentPath
+      if (t1.isCallExpression()) {
+        let rm_path = t1.parentPath
+        if (rm_path.parentPath.isExpressionStatement()) {
+          rm_path = rm_path.parentPath
+        }
+        nodes.push([rm_path.node, 'func2'])
+        rm_path.remove()
+        return
+      }
       if (
-        refer_path.parentPath.isCallExpression() &&
-        refer_path.listKey === 'arguments' &&
-        refer_path.key === 0
+        !refer_path.parentPath.isCallExpression() ||
+        refer_path.listKey !== 'arguments'
       ) {
+        return
+      }
+      if (refer_path.key === 0) {
         let rm_path = refer_path.parentPath
         if (rm_path.parentPath.isExpressionStatement()) {
           rm_path = rm_path.parentPath
@@ -421,7 +433,7 @@ function decodeGlobal(ast) {
         collect_codes.push(t)
         collect_names.push(name)
       } else {
-        console.warning(`redef ${name}`)
+        console.warn(`redef ${name}`)
       }
     }
   }
@@ -1338,6 +1350,69 @@ function unlockEnv(ast) {
   return ast
 }
 
+const LintReturn = {
+  ReturnStatement: {
+    enter(path) {
+      let { argument } = path.node
+      if (!t.isSequenceExpression(argument)) {
+        return
+      }
+      if (!t.isBlockStatement(path.parent)) {
+        return
+      }
+      let body = argument.expressions
+      let last = body.pop()
+      let before = t.expressionStatement(t.sequenceExpression(body))
+      path.insertBefore(before)
+      path.replaceWith(t.returnStatement(last))
+    },
+  },
+}
+
+const LintReturn2 = {
+  ReturnStatement: {
+    enter(path) {
+      let { argument } = path.node
+      if (!t.isCallExpression(argument)) {
+        return
+      }
+      if (!t.isAssignmentExpression(argument.callee)) {
+        return
+      }
+      if (!t.isBlockStatement(path.parent)) {
+        return
+      }
+      let before = t.expressionStatement(argument.callee)
+      path.insertBefore(before)
+      path.replaceWith(
+        t.returnStatement(
+          t.CallExpression(argument.callee.left, argument.arguments)
+        )
+      )
+    },
+  },
+}
+
+let name_count = 1000
+const RenameIdentifier = {
+  FunctionDeclaration(path) {
+    if (!path.node?.id?.name) {
+      return
+    }
+    let up1 = path.parentPath
+    let s = up1.scope.generateUidIdentifier(`_u${name_count++}f`)
+    up1.scope.rename(path.node.id.name, s.name)
+    for (let it of path.node.params) {
+      s = path.scope.generateUidIdentifier(`_u${name_count++}p`)
+      path.scope.rename(it.name, s.name)
+    }
+  },
+  VariableDeclarator(path) {
+    const s = path.scope.generateUidIdentifier(`_u${name_count++}v`)
+    path.scope.rename(path.node.id.name, s.name)
+  },
+}
+
 module.exports = function (jscode) {
   let ast
   try {
@@ -1349,6 +1424,9 @@ module.exports = function (jscode) {
   // IllegalReturn
   const deleteIllegalReturn = require('../visitor/delete-illegal-return')
   traverse(ast, deleteIllegalReturn)
+  traverse(ast, LintReturn)
+  traverse(ast, LintReturn2)
+  traverse(ast, RenameIdentifier)
   // 清理二进制显示内容
   traverse(ast, {
     StringLiteral: ({ node }) => {
@@ -1362,6 +1440,7 @@ module.exports = function (jscode) {
   if (!decodeObject(ast)) {
     return null
   }
+  // traverse(ast, RenameIdentifier)
   console.log('处理全局加密...')
   if (!decodeGlobal(ast)) {
     return null
