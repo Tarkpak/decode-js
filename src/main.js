@@ -11,11 +11,13 @@ let type = 'common'
 let encodeFile = 'input.js'
 let decodeFile = 'output.js'
 for (let i = 2; i < process.argv.length; i += 2) {
+  console.log(process.argv)
   if (process.argv[i] === '-t') {
     type = process.argv[i + 1]
   }
   if (process.argv[i] === '-i') {
     encodeFile = process.argv[i + 1]
+    decodeFile = `${encodeFile.replace('.js', '')}_${type}_output.js`
   }
   if (process.argv[i] === '-o') {
     decodeFile = process.argv[i + 1]
